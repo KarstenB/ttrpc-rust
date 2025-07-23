@@ -171,13 +171,13 @@ impl Server {
         Ok(())
     }
 
-    pub async fn accept(&mut self, conn: Socket) -> std::io::Result<()> {
+    pub fn accept(&self, conn: Socket) -> AcceptedConnection {
         let delegate = ServerBuilder {
             services: self.services.clone(),
             streams: Arc::default(),
             shutdown_waiter: self.shutdown.subscribe(),
         };
-        Connection::new(conn, delegate).run().await
+        AcceptedConnection(Connection::new(conn, delegate))
     }
 
     pub async fn shutdown(&mut self) -> Result<()> {
@@ -231,6 +231,15 @@ async fn spawn_connection_handler(
             })
             .ok();
     });
+}
+
+
+pub struct AcceptedConnection(Connection<ServerBuilder>);
+
+impl AcceptedConnection {
+    pub async fn run(self) -> std::io::Result<()>{
+        self.0.run().await
+    }
 }
 
 struct ServerBuilder {
@@ -635,6 +644,22 @@ mod tests {
         {
             let mut server = Server::new().bind(SOCK_ADDR).unwrap();
             server.start().await.unwrap();
+            assert!(is_socket_in_use(addr));
+        }
+
+        // Sleep to wait for shutdown of server caused by server's lifetime over
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        assert!(!is_socket_in_use(addr));
+    }
+
+    #[tokio::test]
+    async fn test_server_accept() {
+        let addr = SOCK_ADDR
+            .strip_prefix("unix://@")
+            .expect("socket address is not expected");
+        {
+            let server = Server::new();
+            server.accept(Socket::connect_unix(addr).await.unwrap()).run().await;
             assert!(is_socket_in_use(addr));
         }
 
